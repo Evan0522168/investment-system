@@ -20,7 +20,12 @@ def download_data(symbol, force_refresh=False):
     if market == "YF":
         df_new = download_yf(symbol)
     elif market == "TWSE":
-        df_new = download_twse(stock_id)
+        try:
+            df_new = download_twse(stock_id)
+        except Exception:
+            # TWSE API may be blocked on international servers — fall back to yfinance
+            print(f"  [TWSE] 無法連接交易所，改用 yfinance 下載 {stock_id}.TW ...")
+            df_new = download_yf(f"{stock_id}.TW")
     else:
         raise ValueError("Unknown market")
 
