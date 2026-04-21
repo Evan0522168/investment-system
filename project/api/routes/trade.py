@@ -1,4 +1,4 @@
-from fastapi import APIRouter, HTTPException
+"""from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 from simulator.account import Account
 from api.database import (
@@ -87,3 +87,4 @@ def reset_account():
     conn.close()
     _account = Account(initial_cash=1000000)
     return {"success": True, "message": "帳戶已重置"}
+"""
