@@ -1,4 +1,4 @@
-from fastapi import APIRouter
+"""from fastapi import APIRouter
 from data.data_loader import download_data
 from api.routes.trade import _account
 
@@ -44,4 +44,4 @@ def get_portfolio():
         "pnl": round(pnl, 2),
         "pnl_pct": round(pnl_pct, 2),
         "holdings": holdings_detail
-    }
+    }"""
