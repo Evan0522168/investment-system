@@ -1,4 +1,105 @@
 import pandas as pd
+
+
+def run_backtest(df, strategy, initial_cash=1000000, shares_per_trade=1000):
+    cash = initial_cash
+    holdings = 0
+    daily_values = []
+    trade_log = []
+
+    for i in range(50, len(df)):
+        df_slice = df.iloc[:i + 1]
+        current_price = df_slice["Close"].iloc[-1]
+        current_date = str(df_slice.index[-1].date())
+
+        sig = strategy.signal(df_slice)
+
+        if sig == "BUY" and holdings == 0:
+            shares = int(cash // current_price)
+            if shares > 0:
+                cost = shares * current_price
+                cash -= cost
+                holdings = shares
+                trade_log.append({
+                    "date": current_date,
+                    "action": "BUY",
+                    "price": round(current_price, 4),
+                    "shares": shares,
+                    "amount": round(cost, 2)
+                })
+
+        elif sig == "SELL" and holdings > 0:
+            revenue = holdings * current_price
+            cash += revenue
+            trade_log.append({
+                "date": current_date,
+                "action": "SELL",
+                "price": round(current_price, 4),
+                "shares": holdings,
+                "amount": round(revenue, 2)
+            })
+            holdings = 0
+
+        total = cash + holdings * current_price
+        daily_values.append({
+            "date": current_date,
+            "value": round(total, 2),
+            "price": round(current_price, 4),
+            "holdings": holdings
+        })
+
+    # 結算
+    if holdings > 0:
+        final_price = df["Close"].iloc[-1]
+        cash += holdings * final_price
+
+    final_value = round(cash, 2)
+    total_return = round((final_value - initial_cash) / initial_cash * 100, 2)
+
+    values_df = pd.DataFrame(daily_values)
+    daily_returns = values_df["value"].pct_change().dropna()
+    avg_return = daily_returns.mean()
+    std_return = daily_returns.std()
+    sharpe = round((avg_return / std_return * (252 ** 0.5)), 3) if std_return > 0 else 0
+
+    values_df["peak"] = values_df["value"].cummax()
+    values_df["drawdown"] = (values_df["value"] - values_df["peak"]) / values_df["peak"] * 100
+    max_drawdown = round(values_df["drawdown"].min(), 2)
+
+    buy_trades = [t for t in trade_log if t["action"] == "BUY"]
+    sell_trades = [t for t in trade_log if t["action"] == "SELL"]
+
+    win_trades = 0
+    for i in range(min(len(buy_trades), len(sell_trades))):
+        if sell_trades[i]["price"] > buy_trades[i]["price"]:
+            win_trades += 1
+    total_closed = min(len(buy_trades), len(sell_trades))
+    win_rate = round(win_trades / total_closed * 100, 1) if total_closed > 0 else 0
+
+    return {
+        "strategy": strategy.name,
+        "initial_cash": initial_cash,
+        "final_value": final_value,
+        "total_return": total_return,
+        "sharpe": sharpe,
+        "max_drawdown": max_drawdown,
+        "win_rate": win_rate,
+        "total_trades": len(trade_log),
+        "buy_trades": len(buy_trades),
+        "sell_trades": len(sell_trades),
+        "trade_log": trade_log,
+        "daily_values": values_df[["date", "value", "price"]].to_dict(orient="records")
+    }
+
+
+def compare_strategies(df, strategies, initial_cash=1000000):
+    results = []
+    for strategy in strategies:
+        result = run_backtest(df, strategy, initial_cash)
+        results.append(result)
+    results.sort(key=lambda x: x["total_return"], reverse=True)
+    return results
+"""import pandas as pd
 from simulator.account import Account
 
 
@@ -139,4 +240,4 @@ def compare_strategies(df, strategies, initial_cash=1000000, shares_per_trade=10
     best = max(results, key=lambda x: x["total_return"])
     print(f"\n  最佳策略：{best['strategy']}  報酬率：{best['total_return']:.2f}%")
 
-    return results
+    return results"""
