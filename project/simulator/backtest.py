@@ -4,6 +4,8 @@ import pandas as pd
 def run_backtest(df, strategy, initial_cash=1000000):
     cash = initial_cash
     holdings = 0
+    short_position = 0
+    short_entry_price = 0
     daily_values = []
     trade_log = []
 
@@ -14,7 +16,7 @@ def run_backtest(df, strategy, initial_cash=1000000):
 
         sig = strategy.signal(df_slice)
 
-        if sig == "BUY" and holdings == 0:
+        if sig == "BUY" and holdings == 0 and short_position == 0:
             shares = int(cash // current_price)
             if shares > 0:
                 cost = shares * current_price
@@ -40,18 +42,52 @@ def run_backtest(df, strategy, initial_cash=1000000):
             })
             holdings = 0
 
-        total = cash + holdings * current_price
+        elif sig == "SHORT" and short_position == 0 and holdings == 0:
+            shares = int(cash * 0.5 // current_price)
+            if shares > 0:
+                short_position = shares
+                short_entry_price = current_price
+                trade_log.append({
+                    "date": current_date,
+                    "action": "SHORT",
+                    "price": round(current_price, 4),
+                    "shares": shares,
+                    "amount": round(shares * current_price, 2)
+                })
+
+        elif sig == "COVER" and short_position > 0:
+            pnl = (short_entry_price - current_price) * short_position
+            cash += pnl
+            trade_log.append({
+                "date": current_date,
+                "action": "COVER",
+                "price": round(current_price, 4),
+                "shares": short_position,
+                "amount": round(abs(pnl), 2)
+            })
+            short_position = 0
+            short_entry_price = 0
+
+        short_pnl = (short_entry_price - current_price) * short_position if short_position > 0 else 0
+        total = cash + holdings * current_price + short_pnl
         daily_values.append({
             "date": current_date,
             "value": round(total, 2),
             "price": round(current_price, 4),
-            "holdings": holdings
+            "holdings": holdings,
+            "short": short_position
         })
 
     if holdings > 0:
         final_price = df["Close"].iloc[-1]
         cash += holdings * final_price
         holdings = 0
+
+    if short_position > 0:
+        final_price = df["Close"].iloc[-1]
+        pnl = (short_entry_price - final_price) * short_position
+        cash += pnl
+        short_position = 0
 
     final_value = round(cash, 2)
     total_return = round((final_value - initial_cash) / initial_cash * 100, 2)
@@ -66,12 +102,14 @@ def run_backtest(df, strategy, initial_cash=1000000):
     values_df["drawdown"] = (values_df["value"] - values_df["peak"]) / values_df["peak"] * 100
     max_drawdown = round(values_df["drawdown"].min(), 2)
 
-    buy_trades = [t for t in trade_log if t["action"] == "BUY"]
-    sell_trades = [t for t in trade_log if t["action"] == "SELL"]
+    buy_trades = [t for t in trade_log if t["action"] in ["BUY", "SHORT"]]
+    sell_trades = [t for t in trade_log if t["action"] in ["SELL", "COVER"]]
 
     win_trades = 0
     for i in range(min(len(buy_trades), len(sell_trades))):
-        if sell_trades[i]["price"] > buy_trades[i]["price"]:
+        if sell_trades[i]["action"] == "SELL" and sell_trades[i]["price"] > buy_trades[i]["price"]:
+            win_trades += 1
+        elif sell_trades[i]["action"] == "COVER" and sell_trades[i]["price"] < buy_trades[i]["price"]:
             win_trades += 1
     total_closed = min(len(buy_trades), len(sell_trades))
     win_rate = round(win_trades / total_closed * 100, 1) if total_closed > 0 else 0
