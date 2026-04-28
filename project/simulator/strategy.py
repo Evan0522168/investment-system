@@ -226,6 +226,125 @@ class CustomStrategy(Strategy):
         d = super().to_dict()
         d.update({"buy_rules": self.buy_rules, "sell_rules": self.sell_rules})
         return d
+        
+class DCAStrategy(Strategy):
+    """
+    定期定額 — 每隔固定天數買入固定金額
+    不主動賣出，只在回測結束時結算
+    """
+    def __init__(self, interval_days=30):
+        super().__init__(
+            "DCA Strategy",
+            f"Buy fixed amount every {interval_days} days regardless of price"
+        )
+        self.interval_days = interval_days
+        self._last_buy_idx = None
+
+    def signal(self, df):
+        current_idx = len(df) - 1
+        if self._last_buy_idx is None:
+            self._last_buy_idx = current_idx
+            return "BUY"
+        if current_idx - self._last_buy_idx >= self.interval_days:
+            self._last_buy_idx = current_idx
+            return "BUY"
+        return "HOLD"
+
+    def to_dict(self):
+        d = super().to_dict()
+        d.update({"interval_days": self.interval_days})
+        return d
+
+
+class ShortSellingStrategy(Strategy):
+    """
+    做空策略 — 當訊號出現時做空（賣出借來的股票）
+    使用 RSI 超買時做空，RSI 超賣時回補
+    """
+    def __init__(self, period=14, overbought=70, oversold=30):
+        super().__init__(
+            "Short Selling Strategy",
+            f"Short when RSI > {overbought}, Cover when RSI < {oversold}"
+        )
+        self.period = period
+        self.overbought = overbought
+        self.oversold = oversold
+
+    def signal(self, df):
+        rsi = calc_rsi(df["Close"], self.period)
+        latest = rsi.iloc[-1]
+        if latest > self.overbought:
+            return "SHORT"
+        elif latest < self.oversold:
+            return "COVER"
+        return "HOLD"
+
+    def to_dict(self):
+        d = super().to_dict()
+        d.update({"period": self.period, "overbought": self.overbought, "oversold": self.oversold})
+        return d
+
+
+class MeanReversionStrategy(Strategy):
+    """
+    均值回歸 — 價格偏離均線過多時反向操作
+    """
+    def __init__(self, period=20, threshold=0.05):
+        super().__init__(
+            "Mean Reversion Strategy",
+            f"Buy when price is {threshold*100}% below SMA{period}, Sell when above"
+        )
+        self.period = period
+        self.threshold = threshold
+
+    def signal(self, df):
+        close = df["Close"]
+        sma = calc_sma(close, self.period).iloc[-1]
+        if sma is None:
+            return "HOLD"
+        price = close.iloc[-1]
+        deviation = (price - sma) / sma
+        if deviation < -self.threshold:
+            return "BUY"
+        elif deviation > self.threshold:
+            return "SELL"
+        return "HOLD"
+
+    def to_dict(self):
+        d = super().to_dict()
+        d.update({"period": self.period, "threshold": self.threshold})
+        return d
+
+
+class BreakoutStrategy(Strategy):
+    """
+    突破策略 — 價格突破近期高點買入，跌破近期低點賣出
+    """
+    def __init__(self, lookback=20):
+        super().__init__(
+            "Breakout Strategy",
+            f"Buy on {lookback}-day high breakout, Sell on {lookback}-day low breakdown"
+        )
+        self.lookback = lookback
+
+    def signal(self, df):
+        if len(df) < self.lookback + 1:
+            return "HOLD"
+        close = df["Close"]
+        recent_high = close.iloc[-(self.lookback+1):-1].max()
+        recent_low = close.iloc[-(self.lookback+1):-1].min()
+        current = close.iloc[-1]
+        if current > recent_high:
+            return "BUY"
+        elif current < recent_low:
+            return "SELL"
+        return "HOLD"
+
+    def to_dict(self):
+        d = super().to_dict()
+        d.update({"lookback": self.lookback})
+        return d
+
 
 
 BUILTIN_STRATEGIES = {
@@ -234,6 +353,10 @@ BUILTIN_STRATEGIES = {
     "ma": MAStrategy(),
     "bollinger": BollingerStrategy(),
     "combined": CombinedStrategy(),
+    "dca": DCAStrategy(),
+    "short": ShortSellingStrategy(),
+    "mean_reversion": MeanReversionStrategy(),
+    "breakout": BreakoutStrategy(),
 }
 
 
@@ -263,6 +386,25 @@ def build_strategy(config: dict):
         )
     elif stype == "CombinedStrategy":
         return CombinedStrategy()
+    elif stype == "DCAStrategy":
+        return DCAStrategy(
+            interval_days=config.get("interval_days", 30)
+        )
+    elif stype == "ShortSellingStrategy":
+        return ShortSellingStrategy(
+            period=config.get("period", 14),
+            overbought=config.get("overbought", 70),
+            oversold=config.get("oversold", 30)
+        )
+    elif stype == "MeanReversionStrategy":
+        return MeanReversionStrategy(
+            period=config.get("period", 20),
+            threshold=config.get("threshold", 0.05)
+        )
+    elif stype == "BreakoutStrategy":
+        return BreakoutStrategy(
+            lookback=config.get("lookback", 20)
+        )
     elif stype == "CustomStrategy":
         return CustomStrategy(
             name=config.get("name", "Custom Strategy"),
@@ -271,3 +413,4 @@ def build_strategy(config: dict):
             sell_rules=config.get("sell_rules", [])
         )
     raise ValueError(f"Unknown strategy type: {stype}")
+
