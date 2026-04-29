@@ -9,6 +9,8 @@ def run_backtest(df, strategy, initial_cash=1000000):
     daily_values = []
     trade_log = []
 
+    dca_amount = getattr(strategy, 'amount_per_trade', None)
+
     for i in range(50, len(df)):
         df_slice = df.iloc[:i + 1]
         current_price = df_slice["Close"].iloc[-1]
@@ -16,12 +18,16 @@ def run_backtest(df, strategy, initial_cash=1000000):
 
         sig = strategy.signal(df_slice)
 
-        if sig == "BUY" and holdings == 0 and short_position == 0:
-            shares = int(cash // current_price)
+        if sig == "BUY" and short_position == 0:
+            if dca_amount:
+                shares = int(min(dca_amount, cash) // current_price)
+            else:
+                shares = int(cash // current_price) if holdings == 0 else 0
+
             if shares > 0:
                 cost = shares * current_price
                 cash -= cost
-                holdings = shares
+                holdings += shares
                 trade_log.append({
                     "date": current_date,
                     "action": "BUY",
@@ -74,20 +80,16 @@ def run_backtest(df, strategy, initial_cash=1000000):
             "date": current_date,
             "value": round(total, 2),
             "price": round(current_price, 4),
-            "holdings": holdings,
-            "short": short_position
         })
 
     if holdings > 0:
         final_price = df["Close"].iloc[-1]
         cash += holdings * final_price
-        holdings = 0
 
     if short_position > 0:
         final_price = df["Close"].iloc[-1]
         pnl = (short_entry_price - final_price) * short_position
         cash += pnl
-        short_position = 0
 
     final_value = round(cash, 2)
     total_return = round((final_value - initial_cash) / initial_cash * 100, 2)
