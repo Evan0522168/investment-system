@@ -33,11 +33,13 @@ def fetch_twse_month(stock_id, date):
     return df
 
 
-def download_twse(stock_id, start_year=2020):
+def download_twse(stock_id, start_year=2015):
     dfs = []
     today = datetime.today()
     for year in range(start_year, today.year + 1):
         for month in range(1, 13):
+            if year == today.year and month > today.month:
+                break
             date = f"{year}{month:02d}01"
             try:
                 df = fetch_twse_month(stock_id, date)
@@ -46,7 +48,7 @@ def download_twse(stock_id, start_year=2020):
             except Exception:
                 continue
     if not dfs:
-        raise ValueError("No TWSE data")
+        raise ValueError("No TWSE data found")
     result = pd.concat(dfs)
     result = result[~result.index.duplicated()]
     result.sort_index(inplace=True)
