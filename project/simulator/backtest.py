@@ -9,6 +9,7 @@ def run_backtest(df, strategy, initial_cash=1000000):
     daily_values = []
     trade_log = []
 
+    is_dca = hasattr(strategy, 'amount_per_trade')
     dca_amount = getattr(strategy, 'amount_per_trade', None)
 
     for i in range(50, len(df)):
@@ -19,10 +20,14 @@ def run_backtest(df, strategy, initial_cash=1000000):
         sig = strategy.signal(df_slice)
 
         if sig == "BUY" and short_position == 0:
-            if dca_amount:
-                shares = int(min(dca_amount, cash) // current_price)
+            if is_dca:
+                affordable = min(dca_amount, cash)
+                shares = int(affordable // current_price)
             else:
-                shares = int(cash // current_price) if holdings == 0 else 0
+                if holdings == 0:
+                    shares = int(cash // current_price)
+                else:
+                    shares = 0
 
             if shares > 0:
                 cost = shares * current_price
@@ -36,7 +41,7 @@ def run_backtest(df, strategy, initial_cash=1000000):
                     "amount": round(cost, 2)
                 })
 
-        elif sig == "SELL" and holdings > 0:
+        elif sig == "SELL" and holdings > 0 and not is_dca:
             revenue = holdings * current_price
             cash += revenue
             trade_log.append({
