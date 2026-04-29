@@ -150,7 +150,7 @@ class DCAStrategy(Strategy):
     def __init__(self, interval_days=30, amount_per_trade=10000):
         super().__init__(
             "DCA Strategy",
-            f"Invest ${amount_per_trade} every {interval_days} days"
+            f"Invest {amount_per_trade} every {interval_days} days"
         )
         self.interval_days = interval_days
         self.amount_per_trade = amount_per_trade
@@ -168,7 +168,10 @@ class DCAStrategy(Strategy):
 
     def to_dict(self):
         d = super().to_dict()
-        d.update({"interval_days": self.interval_days, "amount_per_trade": self.amount_per_trade})
+        d.update({
+            "interval_days": self.interval_days,
+            "amount_per_trade": self.amount_per_trade
+        })
         return d
 
 
