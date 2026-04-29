@@ -1,6 +1,7 @@
 from simulator.indicators import (
     calc_rsi, calc_macd, calc_sma, calc_ema,
-    calc_bollinger, calc_stochastic
+    calc_bollinger, calc_stochastic, calc_atr,
+    get_indicator_value
 )
 
 
@@ -142,102 +143,17 @@ class CombinedStrategy(Strategy):
         return "HOLD"
 
     def to_dict(self):
-        d = super().to_dict()
-        return d
+        return super().to_dict()
 
 
-class CustomStrategy(Strategy):
-    def __init__(self, name, description, buy_rules, sell_rules):
-        super().__init__(name, description)
-        self.buy_rules = buy_rules
-        self.sell_rules = sell_rules
-
-    def _evaluate_rule(self, df, rule):
-        indicator = rule.get("indicator")
-        condition = rule.get("condition")
-        value = rule.get("value", 0)
-        period = rule.get("period", 14)
-        fast = rule.get("fast", 12)
-        slow = rule.get("slow", 26)
-        close = df["Close"]
-
-        if indicator == "RSI":
-            series = calc_rsi(close, period)
-            val = series.iloc[-1]
-            if condition == "less_than":
-                return val < value
-            elif condition == "greater_than":
-                return val > value
-
-        elif indicator == "SMA":
-            series = calc_sma(close, period)
-            val = series.iloc[-1]
-            if condition == "less_than":
-                return close.iloc[-1] < val
-            elif condition == "greater_than":
-                return close.iloc[-1] > val
-            elif condition == "cross_above":
-                prev = calc_sma(close, period).iloc[-2]
-                return close.iloc[-2] < prev and close.iloc[-1] > val
-            elif condition == "cross_below":
-                prev = calc_sma(close, period).iloc[-2]
-                return close.iloc[-2] > prev and close.iloc[-1] < val
-
-        elif indicator == "EMA":
-            series = calc_ema(close, period)
-            val = series.iloc[-1]
-            if condition == "less_than":
-                return close.iloc[-1] < val
-            elif condition == "greater_than":
-                return close.iloc[-1] > val
-
-        elif indicator == "MACD":
-            macd_line, signal_line, _ = calc_macd(close, fast, slow)
-            if condition == "cross_above":
-                return macd_line.iloc[-2] < signal_line.iloc[-2] and macd_line.iloc[-1] > signal_line.iloc[-1]
-            elif condition == "cross_below":
-                return macd_line.iloc[-2] > signal_line.iloc[-2] and macd_line.iloc[-1] < signal_line.iloc[-1]
-            elif condition == "greater_than":
-                return macd_line.iloc[-1] > signal_line.iloc[-1]
-            elif condition == "less_than":
-                return macd_line.iloc[-1] < signal_line.iloc[-1]
-
-        elif indicator == "BOLL":
-            upper, mid, lower = calc_bollinger(close, period)
-            if condition == "cross_above":
-                return close.iloc[-1] >= upper.iloc[-1]
-            elif condition == "cross_below":
-                return close.iloc[-1] <= lower.iloc[-1]
-
-        return False
-
-    def signal(self, df):
-        if len(df) < 50:
-            return "HOLD"
-        buy = all(self._evaluate_rule(df, r) for r in self.buy_rules)
-        sell = all(self._evaluate_rule(df, r) for r in self.sell_rules)
-        if buy:
-            return "BUY"
-        elif sell:
-            return "SELL"
-        return "HOLD"
-
-    def to_dict(self):
-        d = super().to_dict()
-        d.update({"buy_rules": self.buy_rules, "sell_rules": self.sell_rules})
-        return d
-        
 class DCAStrategy(Strategy):
-    """
-    定期定額 — 每隔固定天數買入固定金額
-    不主動賣出，只在回測結束時結算
-    """
-    def __init__(self, interval_days=30):
+    def __init__(self, interval_days=30, amount_per_trade=10000):
         super().__init__(
             "DCA Strategy",
-            f"Buy fixed amount every {interval_days} days regardless of price"
+            f"Invest ${amount_per_trade} every {interval_days} days"
         )
         self.interval_days = interval_days
+        self.amount_per_trade = amount_per_trade
         self._last_buy_idx = None
 
     def signal(self, df):
@@ -252,15 +168,11 @@ class DCAStrategy(Strategy):
 
     def to_dict(self):
         d = super().to_dict()
-        d.update({"interval_days": self.interval_days})
+        d.update({"interval_days": self.interval_days, "amount_per_trade": self.amount_per_trade})
         return d
 
 
 class ShortSellingStrategy(Strategy):
-    """
-    做空策略 — 當訊號出現時做空（賣出借來的股票）
-    使用 RSI 超買時做空，RSI 超賣時回補
-    """
     def __init__(self, period=14, overbought=70, oversold=30):
         super().__init__(
             "Short Selling Strategy",
@@ -286,9 +198,6 @@ class ShortSellingStrategy(Strategy):
 
 
 class MeanReversionStrategy(Strategy):
-    """
-    均值回歸 — 價格偏離均線過多時反向操作
-    """
     def __init__(self, period=20, threshold=0.05):
         super().__init__(
             "Mean Reversion Strategy",
@@ -317,9 +226,6 @@ class MeanReversionStrategy(Strategy):
 
 
 class BreakoutStrategy(Strategy):
-    """
-    突破策略 — 價格突破近期高點買入，跌破近期低點賣出
-    """
     def __init__(self, lookback=20):
         super().__init__(
             "Breakout Strategy",
@@ -345,6 +251,211 @@ class BreakoutStrategy(Strategy):
         d.update({"lookback": self.lookback})
         return d
 
+
+class CustomStrategy(Strategy):
+    def __init__(self, name, description, buy_rules, sell_rules, logic="AND"):
+        super().__init__(name, description)
+        self.buy_rules = buy_rules
+        self.sell_rules = sell_rules
+        self.logic = logic
+
+    def _evaluate_rule(self, df, rule):
+        operator = rule.get("operator", "greater_than")
+        left_config = rule.get("left", {"source": "Close"})
+        right_config = rule.get("right", {})
+        right_value = rule.get("value", 0)
+
+        left_series = get_indicator_value(df, left_config)
+        if left_series is None or len(left_series) < 2:
+            return False
+
+        left_val = left_series.iloc[-1]
+        left_prev = left_series.iloc[-2]
+
+        if right_config.get("source"):
+            right_series = get_indicator_value(df, right_config)
+            if right_series is None:
+                return False
+            right_val = right_series.iloc[-1]
+            right_prev = right_series.iloc[-2]
+        else:
+            right_val = float(right_value)
+            right_prev = float(right_value)
+
+        if operator == "greater_than":
+            return left_val > right_val
+        elif operator == "less_than":
+            return left_val < right_val
+        elif operator == "greater_equal":
+            return left_val >= right_val
+        elif operator == "less_equal":
+            return left_val <= right_val
+        elif operator == "cross_above":
+            return left_prev <= right_prev and left_val > right_val
+        elif operator == "cross_below":
+            return left_prev >= right_prev and left_val < right_val
+        elif operator == "pct_change_greater":
+            if left_prev == 0:
+                return False
+            return ((left_val - left_prev) / abs(left_prev) * 100) > right_val
+        elif operator == "pct_change_less":
+            if left_prev == 0:
+                return False
+            return ((left_val - left_prev) / abs(left_prev) * 100) < right_val
+        elif operator == "zscore_greater":
+            return left_val > right_val
+        elif operator == "zscore_less":
+            return left_val < right_val
+        elif operator == "percentile_greater":
+            return left_val > right_val
+        elif operator == "percentile_less":
+            return left_val < right_val
+        return False
+
+    def signal(self, df):
+        if len(df) < 50:
+            return "HOLD"
+
+        if self.logic == "OR":
+            buy = any(self._evaluate_rule(df, r) for r in self.buy_rules)
+            sell = any(self._evaluate_rule(df, r) for r in self.sell_rules)
+        else:
+            buy = all(self._evaluate_rule(df, r) for r in self.buy_rules)
+            sell = all(self._evaluate_rule(df, r) for r in self.sell_rules)
+
+        if buy:
+            return "BUY"
+        elif sell:
+            return "SELL"
+        return "HOLD"
+
+    def to_dict(self):
+        d = super().to_dict()
+        d.update({
+            "buy_rules": self.buy_rules,
+            "sell_rules": self.sell_rules,
+            "logic": self.logic
+        })
+        return d
+
+
+class AdvancedStrategy(Strategy):
+    """
+    Advanced Builder - fully flexible rule-based strategy
+    Supports AND/OR logic, all indicators, statistical tools
+    Both buy and sell can have independent logic operators
+    """
+    def __init__(self, name, description, buy_rules, sell_rules,
+                 buy_logic="AND", sell_logic="AND",
+                 mode="long"):
+        super().__init__(name, description)
+        self.buy_rules = buy_rules
+        self.sell_rules = sell_rules
+        self.buy_logic = buy_logic
+        self.sell_logic = sell_logic
+        self.mode = mode
+
+    def _evaluate_rule(self, df, rule):
+        operator = rule.get("operator", "greater_than")
+        left_config = rule.get("left", {"source": "Close"})
+        right_config = rule.get("right", {})
+        right_value = rule.get("value", 0)
+
+        left_series = get_indicator_value(df, left_config)
+        if left_series is None or len(left_series) < 2:
+            return False
+
+        left_val = left_series.iloc[-1]
+        left_prev = left_series.iloc[-2]
+
+        if right_config.get("source"):
+            right_series = get_indicator_value(df, right_config)
+            if right_series is None:
+                return False
+            right_val = right_series.iloc[-1]
+            right_prev = right_series.iloc[-2]
+        else:
+            right_val = float(right_value)
+            right_prev = float(right_value)
+
+        if operator == "greater_than":
+            return left_val > right_val
+        elif operator == "less_than":
+            return left_val < right_val
+        elif operator == "greater_equal":
+            return left_val >= right_val
+        elif operator == "less_equal":
+            return left_val <= right_val
+        elif operator == "cross_above":
+            return left_prev <= right_prev and left_val > right_val
+        elif operator == "cross_below":
+            return left_prev >= right_prev and left_val < right_val
+        elif operator == "pct_change_greater":
+            if left_prev == 0:
+                return False
+            return ((left_val - left_prev) / abs(left_prev) * 100) > right_val
+        elif operator == "pct_change_less":
+            if left_prev == 0:
+                return False
+            return ((left_val - left_prev) / abs(left_prev) * 100) < right_val
+        elif operator == "above_mean_plus_sd":
+            period = int(left_config.get("period", 20))
+            from simulator.indicators import calc_mean, calc_sd
+            mean = calc_mean(df["Close"], period).iloc[-1]
+            sd = calc_sd(df["Close"], period).iloc[-1]
+            return left_val > mean + right_val * sd
+        elif operator == "below_mean_minus_sd":
+            period = int(left_config.get("period", 20))
+            from simulator.indicators import calc_mean, calc_sd
+            mean = calc_mean(df["Close"], period).iloc[-1]
+            sd = calc_sd(df["Close"], period).iloc[-1]
+            return left_val < mean - right_val * sd
+        elif operator == "zscore_greater":
+            return left_val > right_val
+        elif operator == "zscore_less":
+            return left_val < right_val
+        elif operator == "percentile_greater":
+            return left_val > right_val
+        elif operator == "percentile_less":
+            return left_val < right_val
+        return False
+
+    def signal(self, df):
+        if len(df) < 50:
+            return "HOLD"
+
+        if self.buy_logic == "OR":
+            buy = any(self._evaluate_rule(df, r) for r in self.buy_rules)
+        else:
+            buy = all(self._evaluate_rule(df, r) for r in self.buy_rules)
+
+        if self.sell_logic == "OR":
+            sell = any(self._evaluate_rule(df, r) for r in self.sell_rules)
+        else:
+            sell = all(self._evaluate_rule(df, r) for r in self.sell_rules)
+
+        if self.mode == "short":
+            if buy:
+                return "SHORT"
+            elif sell:
+                return "COVER"
+        else:
+            if buy:
+                return "BUY"
+            elif sell:
+                return "SELL"
+        return "HOLD"
+
+    def to_dict(self):
+        d = super().to_dict()
+        d.update({
+            "buy_rules": self.buy_rules,
+            "sell_rules": self.sell_rules,
+            "buy_logic": self.buy_logic,
+            "sell_logic": self.sell_logic,
+            "mode": self.mode
+        })
+        return d
 
 
 BUILTIN_STRATEGIES = {
@@ -388,7 +499,8 @@ def build_strategy(config: dict):
         return CombinedStrategy()
     elif stype == "DCAStrategy":
         return DCAStrategy(
-            interval_days=config.get("interval_days", 30)
+            interval_days=config.get("interval_days", 30),
+            amount_per_trade=config.get("amount_per_trade", 10000)
         )
     elif stype == "ShortSellingStrategy":
         return ShortSellingStrategy(
@@ -410,7 +522,17 @@ def build_strategy(config: dict):
             name=config.get("name", "Custom Strategy"),
             description=config.get("description", ""),
             buy_rules=config.get("buy_rules", []),
-            sell_rules=config.get("sell_rules", [])
+            sell_rules=config.get("sell_rules", []),
+            logic=config.get("logic", "AND")
+        )
+    elif stype == "AdvancedStrategy":
+        return AdvancedStrategy(
+            name=config.get("name", "Advanced Strategy"),
+            description=config.get("description", ""),
+            buy_rules=config.get("buy_rules", []),
+            sell_rules=config.get("sell_rules", []),
+            buy_logic=config.get("buy_logic", "AND"),
+            sell_logic=config.get("sell_logic", "AND"),
+            mode=config.get("mode", "long")
         )
     raise ValueError(f"Unknown strategy type: {stype}")
-
