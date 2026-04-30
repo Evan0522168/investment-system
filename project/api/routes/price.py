@@ -29,7 +29,7 @@ def get_price(symbol: str):
 
 
 @router.post("/{symbol}/update")
-def update_price(symbol: str, start_year: int = 2015):
+def update_price(symbol: str, start_year: int = 2019):
     try:
         clear_cache(symbol)
         df = download_data(symbol, force_refresh=True, start_year=start_year)
