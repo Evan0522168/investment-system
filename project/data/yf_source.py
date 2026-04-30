@@ -2,7 +2,7 @@ import yfinance as yf
 import pandas as pd
 
 
-def download_yf(symbol, start="2015-01-01", end=None):
+def download_yf(symbol, start="2019-01-01", end=None):
     df = yf.download(symbol, start=start, end=end)
     if df.empty:
         raise ValueError(f"No data for {symbol}")
