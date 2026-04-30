@@ -33,7 +33,7 @@ def fetch_twse_month(stock_id, date):
     return df
 
 
-def download_twse(stock_id, start_year=2015):
+def download_twse(stock_id, start_year=2019):
     dfs = []
     today = datetime.today()
     for year in range(start_year, today.year + 1):
