@@ -1,10 +1,10 @@
 from .symbol_resolver import resolve_market
 from .yf_source import download_yf
 from .twse_price import download_twse
-from .cache import is_cache_valid, load_cache, save_cache, update_cache
+from .supabase_cache import is_cache_valid, load_cache, save_cache, update_cache
 
 
-def download_data(symbol, force_refresh=False, start_year=2019):
+def download_data(symbol, force_refresh=False, start_year=2020):
     market = resolve_market(symbol)
     stock_id = symbol.replace(".TW", "")
 
