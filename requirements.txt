@@ -1,7 +1,10 @@
 fastapi
 uvicorn
 pandas
-yfinance
 requests
-a2wsgi
+yfinance
 matplotlib
+numpy
+pyarrow
+fastparquet
+supabase
