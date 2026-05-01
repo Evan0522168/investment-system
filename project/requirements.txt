@@ -1,0 +1,10 @@
+fastapi
+uvicorn
+pandas
+requests
+yfinance
+matplotlib
+numpy
+pyarrow
+fastparquet
+supabase 
