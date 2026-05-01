@@ -1,97 +1,96 @@
 import os
 import pandas as pd
 from datetime import datetime, timedelta
+from supabase import create_client
+
+SUPABASE_URL = os.environ.get("SUPABASE_URL", "https://xdqyxikxdhetccqmstyr.supabase.co")
+SUPABASE_KEY = os.environ.get("SUPABASE_KEY", "sb_publishable_G0WQRYPJnGLsmnWYSN60tw_rdm4YRjr")
+
+client = create_client(SUPABASE_URL, SUPABASE_KEY)
 
 
-CACHE_DIR = "cache"
-
-
-def _ensure_cache_dir():
-    if not os.path.exists(CACHE_DIR):
-        os.makedirs(CACHE_DIR)
-
-
-def _cache_path(stock_id):
-    return os.path.join(CACHE_DIR, f"{stock_id}.parquet")
-
-
-def is_cache_valid(stock_id, max_age_hours=12):
-    path = _cache_path(stock_id)
-    if not os.path.exists(path):
-        return False
-    modified_time = datetime.fromtimestamp(os.path.getmtime(path))
-    age = datetime.now() - modified_time
-    return age < timedelta(hours=max_age_hours)
-
-
-def load_cache(stock_id):
-    path = _cache_path(stock_id)
-    if not os.path.exists(path):
-        return None
+def is_cache_valid(symbol, max_age_hours=12):
     try:
-        df = pd.read_parquet(path)
-        print(f"  [快取] 從本地讀取 {stock_id}（{len(df)} 筆資料）")
+        result = client.table("stock_cache") \
+            .select("updated_at") \
+            .eq("symbol", symbol) \
+            .order("updated_at", desc=True) \
+            .limit(1) \
+            .execute()
+        if not result.data:
+            return False
+        updated_at = datetime.fromisoformat(
+            result.data[0]["updated_at"].replace("Z", "+00:00")
+        )
+        age = datetime.now(updated_at.tzinfo) - updated_at
+        return age < timedelta(hours=max_age_hours)
+    except Exception as e:
+        print(f"  [Supabase] Cache check failed: {e}")
+        return False
+
+
+def load_cache(symbol):
+    try:
+        result = client.table("stock_cache") \
+            .select("*") \
+            .eq("symbol", symbol) \
+            .order("date") \
+            .execute()
+        if not result.data:
+            return None
+        df = pd.DataFrame(result.data)
+        df["Date"] = pd.to_datetime(df["date"])
+        df.set_index("Date", inplace=True)
+        df = df[["open", "high", "low", "close", "volume"]]
+        df.columns = ["Open", "High", "Low", "Close", "Volume"]
+        print(f"  [Supabase] Loaded {symbol} ({len(df)} rows)")
         return df
     except Exception as e:
-        print(f"  [快取] 讀取失敗：{e}")
+        print(f"  [Supabase] Load failed: {e}")
         return None
 
 
-def save_cache(stock_id, df):
-    _ensure_cache_dir()
-    path = _cache_path(stock_id)
+def save_cache(symbol, df):
     try:
-        df.to_parquet(path)
-        print(f"  [快取] 已儲存 {stock_id} → {path}")
+        rows = []
+        for date, row in df.iterrows():
+            rows.append({
+                "symbol": symbol,
+                "date": str(date.date()),
+                "open": float(row["Open"]) if pd.notna(row["Open"]) else None,
+                "high": float(row["High"]) if pd.notna(row["High"]) else None,
+                "low": float(row["Low"]) if pd.notna(row["Low"]) else None,
+                "close": float(row["Close"]) if pd.notna(row["Close"]) else None,
+                "volume": float(row["Volume"]) if pd.notna(row["Volume"]) else None,
+                "updated_at": datetime.now().isoformat(),
+            })
+        batch_size = 500
+        for i in range(0, len(rows), batch_size):
+            batch = rows[i:i + batch_size]
+            client.table("stock_cache") \
+                .upsert(batch, on_conflict="symbol,date") \
+                .execute()
+        print(f"  [Supabase] Saved {symbol} ({len(rows)} rows)")
     except Exception as e:
-        print(f"  [快取] 儲存失敗：{e}")
+        print(f"  [Supabase] Save failed: {e}")
 
 
-def update_cache(stock_id, df_old, df_new):
+def update_cache(symbol, df_old, df_new):
     combined = pd.concat([df_old, df_new])
     combined = combined[~combined.index.duplicated(keep="last")]
     combined.sort_index(inplace=True)
-    save_cache(stock_id, combined)
-    print(f"  [快取] 已更新 {stock_id}（合併後共 {len(combined)} 筆）")
+    save_cache(symbol, combined)
+    print(f"  [Supabase] Updated {symbol} ({len(combined)} rows)")
     return combined
 
 
-def clear_cache(stock_id=None):
-    if stock_id:
-        path = _cache_path(stock_id)
-        if os.path.exists(path):
-            os.remove(path)
-            print(f"  [快取] 已清除 {stock_id}")
+def clear_cache(symbol=None):
+    try:
+        if symbol:
+            client.table("stock_cache").delete().eq("symbol", symbol).execute()
+            print(f"  [Supabase] Cleared {symbol}")
         else:
-            print(f"  [快取] {stock_id} 無快取資料")
-    else:
-        if os.path.exists(CACHE_DIR):
-            for f in os.listdir(CACHE_DIR):
-                os.remove(os.path.join(CACHE_DIR, f))
-            print("  [快取] 已清除所有快取")
-        else:
-            print("  [快取] 無快取資料")
-
-
-def list_cache():
-    if not os.path.exists(CACHE_DIR):
-        print("  [快取] 無任何快取資料")
-        return
-    files = os.listdir(CACHE_DIR)
-    if not files:
-        print("  [快取] 無任何快取資料")
-        return
-    print("\n  [快取] 目前快取清單：")
-    print(f"  {'股票代碼':<12} {'資料筆數':>10} {'檔案大小':>12} {'最後更新':>22}")
-    print("  " + "-" * 58)
-    for f in sorted(files):
-        path = os.path.join(CACHE_DIR, f)
-        stock_id = f.replace(".parquet", "")
-        size = os.path.getsize(path)
-        modified = datetime.fromtimestamp(os.path.getmtime(path)).strftime("%Y-%m-%d %H:%M")
-        try:
-            df = pd.read_parquet(path)
-            rows = len(df)
-        except Exception:
-            rows = 0
-        print(f"  {stock_id:<12} {rows:>10} {size/1024:>10.1f}KB {modified:>22}")
+            client.table("stock_cache").delete().neq("symbol", "").execute()
+            print("  [Supabase] Cleared all cache")
+    except Exception as e:
+        print(f"  [Supabase] Clear failed: {e}")
