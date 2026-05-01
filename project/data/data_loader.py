@@ -30,3 +30,4 @@ def download_data(symbol, force_refresh=False, start_year=2020):
         df = df_new
 
     return df
+    
