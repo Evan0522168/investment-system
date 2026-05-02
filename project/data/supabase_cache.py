@@ -1,9 +1,10 @@
+import os
 import pandas as pd
 from datetime import datetime, timedelta
 from supabase import create_client
 
-SUPABASE_URL = "https://xdqyxikxdhetccqmstyr.supabase.co"
-SUPABASE_KEY = "sb_publishable_G0WQRYPJnGLsmnWYSN60tw_rdm4YRjr"
+SUPABASE_URL = os.environ.get("SUPABASE_URL", "https://xdqyxikxdhetccqmstyr.supabase.co")
+SUPABASE_KEY = os.environ.get("SUPABASE_KEY", "sb_publishable_G0WQRYPJnGLsmnWYSN60tw_rdm4YRjr")
 
 client = create_client(SUPABASE_URL, SUPABASE_KEY)
 
@@ -63,14 +64,12 @@ def save_cache(symbol, df):
                 "volume": float(row["Volume"]) if pd.notna(row["Volume"]) else None,
                 "updated_at": datetime.now().isoformat(),
             })
-
         batch_size = 500
         for i in range(0, len(rows), batch_size):
             batch = rows[i:i + batch_size]
             client.table("stock_cache") \
                 .upsert(batch, on_conflict="symbol,date") \
                 .execute()
-
         print(f"  [Supabase] Saved {symbol} ({len(rows)} rows)")
     except Exception as e:
         print(f"  [Supabase] Save failed: {e}")
