@@ -51,28 +51,27 @@ class CompareRequest(BaseModel):
 def run_backtest_api(req: BacktestRequest):
     try:
         df = download_data(req.symbol)
-
         if req.start_date:
             df = df[df.index >= req.start_date]
         if req.end_date:
             df = df[df.index <= req.end_date]
-
         if len(df) < 60:
-            raise HTTPException(status_code=400, detail="資料不足，無法回測")
-
+            raise HTTPException(status_code=400, detail="Insufficient data for backtest")
         config = req.strategy.dict()
         if config.get("buy_rules"):
             config["buy_rules"] = [r.dict() for r in req.strategy.buy_rules]
         if config.get("sell_rules"):
             config["sell_rules"] = [r.dict() for r in req.strategy.sell_rules]
-
         strategy = build_strategy(config)
         result = run_backtest(df, strategy, req.initial_cash)
         return result
-
+    except HTTPException:
+        raise
     except Exception as e:
+        import traceback
+        print(f"BACKTEST ERROR: {e}")
+        print(traceback.format_exc())
         raise HTTPException(status_code=500, detail=str(e))
-
 
 @router.post("/compare")
 def compare_backtest_api(req: CompareRequest):
