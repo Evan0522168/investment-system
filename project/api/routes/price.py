@@ -1,79 +1,63 @@
-from fastapi import APIRouter, HTTPException
-from data.data_loader import download_data
-from data.cache import clear_cache
+import requests
+import pandas as pd
+import urllib3
+from datetime import datetime
 
-router = APIRouter()
+urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
 
-@router.get("/{symbol}")
-def get_price(symbol: str):
+def fetch_twse_month(stock_id, date):
+    url = "https://www.twse.com.tw/exchangeReport/STOCK_DAY"
+    params = {
+        "response": "json",
+        "date": date,
+        "stockNo": stock_id
+    }
     try:
-        df = download_data(symbol)
-        close = df["Close"]
-        return {
-            "symbol": symbol,
-            "latest_close": round(close.iloc[-1], 4),
-            "previous_close": round(close.iloc[-2], 4),
-            "change": round(close.iloc[-1] - close.iloc[-2], 4),
-            "change_pct": round((close.iloc[-1] - close.iloc[-2]) / close.iloc[-2] * 100, 2),
-            "high_52w": round(close[-252:].max(), 4),
-            "low_52w": round(close[-252:].min(), 4),
-            "total_days": len(df),
-            "date_range": {
-                "start": str(df.index[0].date()),
-                "end": str(df.index[-1].date())
-            }
-        }
+        r = requests.get(url, params=params, timeout=10, verify=False)
+        data = r.json()
+        if data["stat"] != "OK":
+            print(f"  [TWSE] {stock_id} {date}: stat={data['stat']}")
+            return None
+        df = pd.DataFrame(data["data"], columns=data["fields"])
+        df.rename(columns={
+            "日期": "Date",
+            "開盤價": "Open",
+            "最高價": "High",
+            "最低價": "Low",
+            "收盤價": "Close",
+            "成交股數": "Volume"
+        }, inplace=True)
+        df["Date"] = pd.to_datetime(df["Date"].apply(
+            lambda x: f"{int(x.split('/')[0]) + 1911}/{x.split('/')[1]}/{x.split('/')[2]}"
+        ))
+        df.set_index("Date", inplace=True)
+        for col in ["Open", "High", "Low", "Close"]:
+            df[col] = df[col].str.replace(",", "").astype(float)
+        df["Volume"] = df["Volume"].str.replace(",", "").astype(float)
+        print(f"  [TWSE] {stock_id} {date}: {len(df)} rows")
+        return df
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        print(f"  [TWSE] {stock_id} {date}: ERROR {e}")
+        return None
 
 
-@router.post("/{symbol}/update")
-def update_price(symbol: str, start_year: int = 2019):
-    try:
-        clear_cache(symbol)
-        df = download_data(symbol, force_refresh=True, start_year=start_year)
-        return {
-            "success": True,
-            "symbol": symbol,
-            "total_days": len(df),
-            "latest_date": str(df.index[-1].date()),
-            "earliest_date": str(df.index[0].date())
-        }
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
-
-
-@router.get("/{symbol}/history")
-def get_history(symbol: str, days: int = 365):
-    try:
-        df = download_data(symbol)
-        df_slice = df.tail(days)
-        records = []
-        for date, row in df_slice.iterrows():
-            records.append({
-                "date": str(date.date()),
-                "open": round(row["Open"], 4),
-                "high": round(row["High"], 4),
-                "low": round(row["Low"], 4),
-                "close": round(row["Close"], 4),
-                "volume": int(row["Volume"])
-            })
-        return {"symbol": symbol, "days": days, "data": records}
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
-
-@router.get("/debug/twse-test")
-def debug_twse():
-    import requests
-    try:
-        url = "https://www.twse.com.tw/exchangeReport/STOCK_DAY"
-        params = {"response": "json", "date": "20230101", "stockNo": "0050"}
-        r = requests.get(url, params=params, timeout=10)
-        return {
-            "status_code": r.status_code,
-            "content_type": r.headers.get("Content-Type"),
-            "body_preview": r.text[:500]
-        }
-    except Exception as e:
-        return {"error": str(e)}
+def download_twse(stock_id, start_year=2020):
+    dfs = []
+    today = datetime.today()
+    print(f"  [TWSE] Starting download for {stock_id} from {start_year}")
+    for year in range(start_year, today.year + 1):
+        for month in range(1, 13):
+            if year == today.year and month > today.month:
+                break
+            date = f"{year}{month:02d}01"
+            df = fetch_twse_month(stock_id, date)
+            if df is not None:
+                dfs.append(df)
+    print(f"  [TWSE] Total months fetched: {len(dfs)}")
+    if not dfs:
+        raise ValueError("No TWSE data found")
+    result = pd.concat(dfs)
+    result = result[~result.index.duplicated()]
+    result.sort_index(inplace=True)
+    return result
