@@ -1,13 +1,9 @@
-def resolve_market(symbol: str) -> str:
-    # 台股通常是數字
+def resolve_market(symbol: str):
+    # 全部改走 yfinance，台股加 .TW 後綴
     if symbol.isdigit():
-        return "TWSE"
-
-    # 台股 yfinance 格式
+        return "YF_TW"
     if symbol.endswith(".TW"):
-        return "TWSE"
-
-    # 其他預設使用 yfinance
+        return "YF"
     return "YF"
 
 
