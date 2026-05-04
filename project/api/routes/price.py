@@ -62,3 +62,18 @@ def get_history(symbol: str, days: int = 365):
         return {"symbol": symbol, "days": days, "data": records}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+
+@router.get("/debug/twse-test")
+def debug_twse():
+    import requests
+    try:
+        url = "https://www.twse.com.tw/exchangeReport/STOCK_DAY"
+        params = {"response": "json", "date": "20230101", "stockNo": "0050"}
+        r = requests.get(url, params=params, timeout=10)
+        return {
+            "status_code": r.status_code,
+            "content_type": r.headers.get("Content-Type"),
+            "body_preview": r.text[:500]
+        }
+    except Exception as e:
+        return {"error": str(e)}
