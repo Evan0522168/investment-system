@@ -2,9 +2,11 @@ fastapi
 uvicorn
 pandas
 requests
-yfinance
+yfinance==0.2.38
 matplotlib
 numpy
 pyarrow
 fastparquet
-supabase 
+supabase
+urllib3
+FinMind
