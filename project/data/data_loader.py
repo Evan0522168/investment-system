@@ -1,11 +1,17 @@
 from .symbol_resolver import resolve_market
 from .yf_source import download_yf
-from .twse_price import download_twse
 from .supabase_cache import is_cache_valid, load_cache, save_cache, update_cache
 
 
 def download_data(symbol, force_refresh=False, start_year=2020):
-    market = resolve_market(symbol)
+    # 台股數字代號自動加 .TW
+    if symbol.isdigit():
+        yf_symbol = f"{symbol}.TW"
+    elif symbol.endswith(".TW"):
+        yf_symbol = symbol
+    else:
+        yf_symbol = symbol
+
     stock_id = symbol.replace(".TW", "")
 
     if not force_refresh and is_cache_valid(stock_id):
@@ -13,14 +19,9 @@ def download_data(symbol, force_refresh=False, start_year=2020):
         if df is not None:
             return df
 
-    print(f"  [Download] Fetching {stock_id} from {start_year}...")
+    print(f"  [Download] Fetching {yf_symbol} from {start_year} via yfinance...")
 
-    if market == "YF":
-        df_new = download_yf(symbol, start=f"{start_year}-01-01")
-    elif market == "TWSE":
-        df_new = download_twse(stock_id, start_year=start_year)
-    else:
-        raise ValueError("Unknown market")
+    df_new = download_yf(yf_symbol, start=f"{start_year}-01-01")
 
     df_old = load_cache(stock_id)
     if df_old is not None:
@@ -30,4 +31,3 @@ def download_data(symbol, force_refresh=False, start_year=2020):
         df = df_new
 
     return df
-    
